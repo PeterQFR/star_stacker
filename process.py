@@ -21,7 +21,7 @@ import numpy as np
 import os
 import argparse
 from scipy.spatial.distance import cdist
-
+from scipy.optimize import curve_fit
 MAX_FEATURES = 1000
 GOOD_MATCH_PERCENT = 0.75
 def threshold(im, sdthres=30):
@@ -163,14 +163,12 @@ def alignImages(im1, im2):
         points1[i, :] = keypoints1[match.queryIdx].pt
         points2[i, :] = keypoints2[match.trainIdx].pt
         
-    #print("{}, {}".format(points1[:5,:], points2[:5,:]))
-
     # Find homography
     h, mask = cv2.findHomography(points1, points2, cv2.RANSAC)
-    print(h)
 
     if h is not None:
         if h[:,2].mean() > 1000:
+            print('Bad Alignment Detected')
             return None, None
         #cv2.imwrite("matches.jpg", imMatches)
         # Use homography
@@ -184,11 +182,57 @@ def alignImages(im1, im2):
     else:
         return None, None
 
-def findBadPixels(im):
+def getLightPollutionForImage(im):
     '''
-    These seem to be when there is an unbalanced value
-    across the colour channels
+    This fits the intensity of the background as a function of pixellocation
+    with some arbitatry weigting function. This solution can be used to remove
+    that function from the 
     '''
+    bg, stars = threshold(im, 3)
+    
+    #so need to extract the x values and y values for each pixel as well as brigtness
+    #that is just background. 
+    row, column, depth = np.indices(im.shape)
+    y = im[stars==25].flatten()
+    x1 = row[stars==25].flatten().reshape((y.shape[0], 1))
+    x2 = column[stars==25].flatten().reshape((y.shape[0], 1))
+    x0 =np.ones(x2.shape)
+
+    x = np.hstack((x0, x1, x2))
+
+    print('yshape {}'.format(y.shape))
+    print('x1shape {}'.format(x1.shape))
+    print('x2shape {}'.format(x2.shape))
+    #assert(x1.shape == x2.shape)
+    #assert(x1.shape == y.shape)
+    
+    beta = np.zeros((3,1))
+
+    def model(xdata, *params):
+        return np.matmul( xdata, params)
+    #Fit a weighted least squares.
+    beta, W =curve_fit(model, x, y, np.ones((3, 1)))
+    print(W)
+    print(beta)
+
+    #generate weighted matrix
+    #W=np.diag(len(y))
+    #import matplotlib.pyplot as plt
+
+    #plt.plot(x1, y, 'gx')
+    #plt.plot(x2, y,'rx')
+    #plt.show()
+    xfull, yfull, depth = np.indices(im.shape)
+    x1opt = xfull.flatten().reshape((-1, 1))
+    x2opt = yfull.flatten().reshape((-1, 1))
+    x0opt = np.ones(x2opt.shape)
+
+    xopt = np.hstack((x0opt, x1opt, x2opt))
+    yopt = np.matmul(xopt, beta)
+    yopt.reshape(im.shape)
+    return yopt, bg
+
+
 
 def parse_args():
     parser=argparse.ArgumentParser(description='Stack a series of images captured by a camera of the night sky')
@@ -206,7 +250,9 @@ if __name__ == "__main__":
 
     dir = os.path.abspath(args.dir)
     files = os.listdir(dir)
-    print(files)
+    print('Processing the following directory {}'.format(dir))
+    print('Files found {}'.format(files))
+    
     pictures=[]
     for f in files:
         if '.jpg' in f:
@@ -217,13 +263,13 @@ if __name__ == "__main__":
 
     images =[]
     unaligned=[]
-    for p in pictures:
+    for i, p in enumerate(pictures):
+        print('{}/{} Processing {}'.format(i, len(pictures), p))
         img=cv2.imread('{}/{}'.format(dir, p))
 
         imgaligned, h = alignImages(img, imgref)
         if imgaligned is not None:
            images.append(imgaligned)
-           print('dtype img {}'.format(imgaligned.dtype))
         else:
            unaligned.append(img)
            #imgref=img
@@ -233,17 +279,22 @@ if __name__ == "__main__":
     img1 = imgref.astype(np.float32)
 
     for img in images:
-        img = cv2.medianBlur(img, 7)
+        img = cv2.medianBlur(img, 11) # remove dead pixels
         img1+=img.astype(np.float32)
 
         if img1.max() > 220.:
-            img1*=220.0/img1.max()
+            #img1*=220.0/img1.max()
+            img1[img1>220] = 220
 
     
     img1*=255.0/img1.max()
+    #lightpol, bg = getLightPollutionForImage(img1)
+    #img1[bg==1] -= lightpol[bg==1]
+    print("Complete")
     cv2.imshow('img1', img1.astype(np.uint8))
     cv2.waitKey(0)
-
+    
+    cv2.imwrite('{}/solution.jpeg'.format(dir), img1)
 
 
 
