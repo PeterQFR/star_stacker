@@ -1,0 +1,114 @@
+
+import open3d as o3d
+import numpy as np
+import copy
+import cv2
+import os
+
+MAX_FEATURES=500
+def pointsFromImages(im1, im2):
+    im1Gray = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
+    im2Gray = cv2.cvtColor(im2, cv2.COLOR_BGR2GRAY)
+    th=45
+    im1Gray[im1Gray < th] =0
+    
+    im1Gray[im1Gray >= th] =255
+    im2Gray[im2Gray < th]=0
+    
+    im2Gray[im2Gray >= th] =255
+    orb = cv2.ORB_create(MAX_FEATURES)
+    keypoints1, descriptors1 = orb.detectAndCompute(im1Gray, None)
+    keypoints2, descriptors2 = orb.detectAndCompute(im2Gray, None)
+    lodes1=[]
+    lodes2=[]
+    for kp in keypoints1: 
+        lodes1.append([kp.pt[0], kp.pt[1], 0.0])
+    for kp in keypoints2:
+        lodes2.append([kp.pt[0], kp.pt[1], 0.0])
+
+    des1 = np.array(lodes1)
+    des2 = np.array(lodes2)
+    return des1, des2
+
+def draw_registration_result(source, target, transformation):
+    source_temp = copy.deepcopy(source)
+    target_temp = copy.deepcopy(target)
+    source_temp.paint_uniform_color([1, 0.0, 0])
+    target_temp.paint_uniform_color([0, 0.651, 0.0])
+    source_temp.transform(transformation)
+    o3d.visualization.draw_geometries([source_temp, target_temp])
+
+
+
+def icp(source, target):
+    threshold =700.02
+    trans_init = np.asarray([[1.0, 0.0, 0.0, 0.0],
+                             [0.0, 1.0, 0.0, 0.0],
+                             [0.0, 0.0, 1.0, 0.0], 
+                             [0.0, 0.0, 0.0, 1.0]])
+    draw_registration_result(source, target, trans_init)
+    print("Initial alignment")
+    evaluation = o3d.registration.evaluate_registration(source, target,
+                                                        threshold, trans_init)
+    print(evaluation)
+
+    print("Apply point-to-point ICP")
+    reg_p2p = o3d.registration.registration_icp(
+        source, target, threshold, trans_init,
+        o3d.registration.TransformationEstimationPointToPoint(), criteria=o3d.registration.ICPConvergenceCriteria(max_iteration=200))
+    print(reg_p2p)
+    print("Transformation is:")
+    print(reg_p2p.transformation)
+    print("")
+    draw_registration_result(source, target, reg_p2p.transformation)
+    
+    print("Finding closest points dropping rest and continuing")
+    source_temp = copy.deepcopy(source)
+    source_temp.transform(reg_p2p.transformation)
+    print(target.points)
+    kdtree = o3d.geometry.KDTreeFlann(target)
+    for pt in source_temp.points:
+        closest= kdtree.search_knn_vector_3d(pt.astype(np.float64), 1)
+        print(closest[0])
+        print(closest[1])
+        print(closest[2])
+        print(target.points[closest[1][0]]) 
+        print(pt)
+        diff = pt-target.points[closest[1][0]]
+        print('norm {}'.format(np.linalg.norm(diff)))
+    
+    return reg_p2p.transformation
+    
+if __name__ == "__main__":
+	cv2.namedWindow('img1', cv2.WINDOW_NORMAL)
+	cv2.namedWindow('img2', cv2.WINDOW_NORMAL)
+	cv2.namedWindow('img3', cv2.WINDOW_NORMAL)
+
+	files = os.listdir('{}/26_18_20_11_09_2019'.format(os.getcwd()))
+	print(files)
+	pictures=[]
+	for f in files:
+	    if '.jpg' in f:
+		pictures.append(f)
+
+	print sorted(pictures, key=str.lower)
+	imgref = cv2.imread('./26_18_20_11_09_2019/{}'.format(pictures[len(pictures)/2]))
+	
+
+	images =[]
+	unaligned=[]
+	for p in pictures:
+	    img=cv2.imread('./26_18_20_11_09_2019/{}'.format(p))
+	    
+	    so, ta = pointsFromImages(img, imgref)
+	    #cv2.imshow('img1', img)
+	    #cv2.imshow('img2', imgref)
+	    #cv2.waitKey(0)
+	    source = o3d.geometry.PointCloud()
+        source.points = o3d.utility.Vector3dVector(so)
+        target =o3d.geometry.PointCloud()
+        target.points = o3d.utility.Vector3dVector(ta)
+        trans = icp(source, target)
+        
+        h = np.zeros((3,3))
+	    
