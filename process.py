@@ -19,6 +19,7 @@
 import cv2
 import numpy as np
 import os
+import argparse
 from scipy.spatial.distance import cdist
 
 MAX_FEATURES = 1000
@@ -183,6 +184,16 @@ def alignImages(im1, im2):
     else:
         return None, None
 
+def findBadPixels(im):
+    '''
+    These seem to be when there is an unbalanced value
+    across the colour channels
+    '''
+
+def parse_args():
+    parser=argparse.ArgumentParser(description='Stack a series of images captured by a camera of the night sky')
+    parser.add_argument('-d', '--dir', dest='dir', help='directory to the images from a run')
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
@@ -190,21 +201,24 @@ if __name__ == "__main__":
     cv2.namedWindow('img1', cv2.WINDOW_NORMAL)
     cv2.namedWindow('img2', cv2.WINDOW_NORMAL)
     cv2.namedWindow('img3', cv2.WINDOW_NORMAL)
+    
+    args = parse_args()
 
-    files = os.listdir('{}/26_18_20_11_09_2019'.format(os.getcwd()))
+    dir = os.path.abspath(args.dir)
+    files = os.listdir(dir)
     print(files)
     pictures=[]
     for f in files:
         if '.jpg' in f:
             pictures.append(f)
 
-    imgref = cv2.imread('./26_18_20_11_09_2019/{}'.format(pictures[int(len(pictures)/2)]))
+    imgref = cv2.imread('{}/{}'.format(dir, pictures[int(len(pictures)/2)]))
     #imgref = cv2.resize(imgref,None,fx=0.5, fy=0.5, interpolation = cv2.INTER_AREA)
 
     images =[]
     unaligned=[]
     for p in pictures:
-        img=cv2.imread('./26_18_20_11_09_2019/{}'.format(p))
+        img=cv2.imread('{}/{}'.format(dir, p))
 
         imgaligned, h = alignImages(img, imgref)
         if imgaligned is not None:
@@ -216,39 +230,20 @@ if __name__ == "__main__":
         #cv2.waitKey(0)
 
     com=imgref.astype(np.float32)
-    img1 = imgref
+    img1 = imgref.astype(np.float32)
 
     for img in images:
-        img1+=img
+        img = cv2.medianBlur(img, 7)
+        img1+=img.astype(np.float32)
 
+        if img1.max() > 220.:
+            img1*=220.0/img1.max()
 
-        cv2.imshow('img1', img1)
-        cv2.waitKey(0)
-        #img1[img1 < 30] =0
-        #com=com+img.astype(np.float32)
-
-
-    #com=cv2.normalize(com, None, 0, 255, cv2.NORM_MINMAX)
-    print('NP Max {}'.format(np.max(com)))
-    com/=np.max(com)
-    com*=255.0
-    #alt = unaligned[0].astype(np.float32)
-    #alt /=(np.max(alt)*0.5)
-    disp = com.astype(np.uint8)
-    dispgrey = np.sum(disp, axis=2)
-    #disp[disp > 50]=255
-
-    #disp/=(np.max(disp))
-    #dispgrey/=(np.max(dispgrey))
-
-    #disp[disp<0.5]=0.0
-    #alt[alt<0.5]=0.0
-
-    #cv2.imshow('img1', alt )
-    cv2.imshow('img2', dispgrey)
-
-    cv2.imshow('img3', disp)
-
+    
+    img1*=255.0/img1.max()
+    cv2.imshow('img1', img1.astype(np.uint8))
     cv2.waitKey(0)
+
+
 
 
