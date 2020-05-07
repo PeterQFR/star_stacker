@@ -22,7 +22,7 @@ import os
 from scipy.spatial.distance import cdist
 
 MAX_FEATURES = 1000
-GOOD_MATCH_PERCENT = 0.5
+GOOD_MATCH_PERCENT = 0.75
 def threshold(im, sdthres=30):
     imGray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
     
@@ -39,7 +39,7 @@ def findBlobs(imstars):
     params.minThreshold=1
     params.maxThreshold=20
     params.thresholdStep=2
-    params.minArea=3
+    params.minArea=20
 
     params.filterByArea=True
     params.minDistBetweenBlobs=10
@@ -72,8 +72,8 @@ def keypointAsVector(keypoints):
 
 def findStars(im1, im2):
     
-    im1bg, im1stars = threshold(im1)
-    im2bg, im2stars = threshold(im2)
+    im1bg, im1stars = threshold(im1,3)
+    im2bg, im2stars = threshold(im2, 3)
     cv2.imshow('img1', im1stars)
     cv2.imshow('img2', im2stars)
     #cv2.waitKey(0)
@@ -119,17 +119,17 @@ def getMatchedFeatures(im1, im2):
     # Convert images to grayscale
     keypoints1, d1, keypoints2, d2= findStars(im1, im2)
     
-    print(d1) 
+    #print(d1) 
     # Match features.
     matcher = cv2.BFMatcher()
     # FLANN parameters
     FLANN_INDEX_KDTREE = 1
-    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 10)
     search_params = dict(checks=50)   # or pass empty dictionary
     flann = cv2.FlannBasedMatcher(index_params,search_params)
-    matches = matcher.knnMatch(d1[:, :5].astype(np.float32), d2[:,:5].astype(np.float32), k=2)
+    matches = matcher.knnMatch(d1[:, :6].astype(np.float32), d2[:,:6].astype(np.float32), k=2)
 
-    #matches = matcher.match(descriptors1, descriptors2, None)
+    #matches = matcher.match(d1[:,:6].astype(np.float32), d2[:, :6].astype(np.float32), None)
     # Sort matches by score
     matches.sort(key=lambda x: x[0].distance, reverse=False)
 
@@ -169,12 +169,16 @@ def alignImages(im1, im2):
     print(h)
 
     if h is not None:
-        
+        if h[:,2].mean() > 1000:
+            return None, None
         #cv2.imwrite("matches.jpg", imMatches)
         # Use homography
         height, width, channels = im2.shape
+        
         im1Reg = cv2.warpPerspective(im1, h, (width, height))
-
+        cv2.imshow('img1',im1)
+        cv2.imshow('img2',im1Reg)
+        #cv2.waitKey(0)
         return im1Reg, h
     else:
         return None, None
