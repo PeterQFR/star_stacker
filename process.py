@@ -1,90 +1,17 @@
 import cv2
 import numpy as np
 import os
+from scipy.spatial.distance import cdist
+
 MAX_FEATURES = 1000
 GOOD_MATCH_PERCENT = 0.5
-def icpImages(im1, im2):
-    im1Gray = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
-    im2Gray = cv2.cvtColor(im2, cv2.COLOR_BGR2GRAY)
-    orb = cv2.ORB_create(MAX_FEATURES)
-    keypoints1, descriptors1 = orb.detectAndCompute(im1Gray, None)
-    keypoints2, descriptors2 = orb.detectAndCompute(im2Gray, None)
-    lodes1=[]
-    lodes2=[]
-    for kp in keypoints1: 
-        lodes1.append([kp.pt[0], kp.pt[1], 0.0, 0.0, 0.0, 1.0])
-    for kp in keypoints2:
-        lodes2.append([kp.pt[0], kp.pt[1], 0.0, 0.0, 0.0, 1.0])
-
-    des1 = np.array(lodes1)
-    des2 = np.array(lodes2)
-    icp=cv2.ppf_match_3d_ICP(30, rejectionScale=1000.0)
-    retval, residual, pose=icp.registerModelToScene(des1.astype(np.float32), des2.astype(np.float32))
-    print('pose {}'.format(pose))
-
-    return None, None
-
-def createPystanModel():
-    import pystan
-
-    startransform='''
-    functions{
-    }
-    data {
-      int N; //number of kpfeatures
-      int K; //number of features to fit.
-      matrix[N, 2] kp1;
-      matrix[K, 2] kp2;
-    }
-    transformed data {}
-    parameters{
-      real x; //translation offset
-      real y; //translation offset
-      real theta; //theta offset
-      vector[2] stars[N]
-    }
-    
-    '''
-
-
-def findTransform(kp1, kp2):
-    import pymc3 as pm
-    import matplotlib.pyplot as plt
-    print(kp1)
-    #now we will treat kp1 as the means of gaussians, transformed by some
-    #rotation and translation. kp2 is the data which that will fit
-    with pm.Model() as model:
-        #original stars.
-        nk = 30 #kp1.shape[0]
-        w = pm.Dirichlet('w', np.ones(nk))
-
-        comp_dist = []
-        mu = []
-        packed_chol = []
-        chol = []
-        for i in range(nk):
-            mu.append(pm.Normal('mu%i'%i, 0, 1, shape=2))
-            packed_chol.append(pm.LKJCholeskyCov('chol_cov_%i'%i,
-                                             eta=2, 
-                                             n=2, 
-                                             sd_dist=pm.HalfNormal.dist(2.5)))
-            chol.append(pm.expand_packed_triangular(2, packed_chol[i], lower=True))
-            comp_dist.append(pm.MvNormal.dist(mu=mu[i], chol=chol[i]))
-
-        xobs = pm.Mixture('x_obs', w, comp_dist,
-            observed=kp1)       
-        
-        trace = pm.sample(2000 )
-        pm.traceplot(trace)
-        plt.show()
-
 def threshold(im, sdthres=30):
     imGray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
     
     imBackground = np.ones(imGray.shape)
     imBackground[sdthres < (imGray- np.median(imGray))/imGray.std()] = 0
     imStars = np.zeros(imGray.shape)
-    print('stdev {} mean {} median {}'.format(imGray.std(), imGray.mean(), np.median(imGray)))
+    #print('stdev {} mean {} median {}'.format(imGray.std(), imGray.mean(), np.median(imGray)))
     imStars[sdthres < (imGray- np.median(imGray))/imGray.std()] = 25
     return imBackground, imStars
 
@@ -107,8 +34,23 @@ def findBlobs(imstars):
     detector = cv2.SimpleBlobDetector_create(params)
     #print(imstars)
     keypoints = detector.detect(imstars.astype(np.uint8))
-    return keypoints
+    k = keypointAsVector(keypoints)
+    
+    des = cdist(k, k, 'euclidean')
+    np.matrix.sort(des, axis=1)
+    
+    return keypoints, des
 
+
+def keypointAsVector(keypoints):
+
+    kparray = np.zeros((len(keypoints), 2))
+    for i,  k in enumerate(keypoints):
+        kparray[i, 0]=k.pt[0]
+        kparray[i, 1]=k.pt[1]
+
+    kparray.astype(np.int32)
+    return kparray
 
 def findStars(im1, im2):
     
@@ -116,16 +58,19 @@ def findStars(im1, im2):
     im2bg, im2stars = threshold(im2)
     cv2.imshow('img1', im1stars)
     cv2.imshow('img2', im2stars)
-    cv2.waitKey(0)
+    #cv2.waitKey(0)
     #kp1 = findBlobs(cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY))
-    kp1 = findBlobs(im1stars)
-    kp2 = findBlobs(im2stars)
-    print(kp1)
+    kp1, des1 = findBlobs(im1stars)
+    kp2, des2 = findBlobs(im2stars)
+    
+
+    
+
     im_with_keypoints = cv2.drawKeypoints(im1, kp1, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
     cv2.imshow("img3", im_with_keypoints)
-    cv2.waitKey(0)
+    #cv2.waitKey(0)
     #TODO Create distance descriptors
-    return kp1, kp2
+    return kp1, des1, kp2, des2
 
 def getOrbKP(im1, im2):
 
@@ -154,12 +99,9 @@ def appendOrbDescWithPos(des, kps):
 def getMatchedFeatures(im1, im2):
     th=30
     # Convert images to grayscale
-    keypoints1, des1, keypoints2, des2= findStars(im1, im2)
-    #keypoints1, des1, keypoints2, des2 = getOrbKP(im1, im2)
+    keypoints1, d1, keypoints2, d2= findStars(im1, im2)
     
-    d1 = appendOrbDescWithPos(des1, keypoints1)
-    d2 = appendOrbDescWithPos(des2, keypoints2)
-    
+    print(d1) 
     # Match features.
     matcher = cv2.BFMatcher()
     # FLANN parameters
@@ -167,7 +109,7 @@ def getMatchedFeatures(im1, im2):
     index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
     search_params = dict(checks=50)   # or pass empty dictionary
     flann = cv2.FlannBasedMatcher(index_params,search_params)
-    matches = matcher.knnMatch(d1.astype(np.float32), d2.astype(np.float32), k=2)
+    matches = matcher.knnMatch(d1[:, :5].astype(np.float32), d2[:,:5].astype(np.float32), k=2)
 
     #matches = matcher.match(descriptors1, descriptors2, None)
     # Sort matches by score
@@ -180,7 +122,7 @@ def getMatchedFeatures(im1, im2):
     good_without_list = []
 
     for m, n in matches:
-        if m.distance < 0.25 * n.distance:
+        if m.distance < 0.75 * n.distance:
             good.append([m])
         good_without_list.append(m)
     matches=good_without_list
@@ -188,7 +130,7 @@ def getMatchedFeatures(im1, im2):
     imMatches = cv2.drawMatches(im1, keypoints1, im2, keypoints2, matches, None)
 
     cv2.imshow('img2', imMatches)
-    cv2.waitKey(0)
+    cv2.waitKey(1)
     return keypoints1, keypoints2, matches, imMatches
 
 
@@ -202,18 +144,18 @@ def alignImages(im1, im2):
         points1[i, :] = keypoints1[match.queryIdx].pt
         points2[i, :] = keypoints2[match.trainIdx].pt
         
-    print("{}, {}".format(points1[:5,:], points2[:5,:]))
+    #print("{}, {}".format(points1[:5,:], points2[:5,:]))
 
     # Find homography
     h, mask = cv2.findHomography(points1, points2, cv2.RANSAC)
-    #print h
+    print(h)
 
     if h is not None:
         
         #cv2.imwrite("matches.jpg", imMatches)
         # Use homography
         height, width, channels = im2.shape
-        im1Reg = cv2.warpPerspective(im1, np.linalg.inv(h), (width, height))
+        im1Reg = cv2.warpPerspective(im1, h, (width, height))
 
         return im1Reg, h
     else:
