@@ -24,6 +24,7 @@ from scipy.spatial.distance import cdist
 from scipy.optimize import curve_fit
 MAX_FEATURES = 1000
 GOOD_MATCH_PERCENT = 0.75
+
 def threshold(im, sdthres=30):
     imGray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
     
@@ -77,8 +78,6 @@ def findStars(im1, im2):
     im2bg, im2stars = threshold(im2, 3)
     cv2.imshow('img1', im1stars)
     cv2.imshow('img2', im2stars)
-    #cv2.waitKey(0)
-    #kp1 = findBlobs(cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY))
     kp1, des1 = findBlobs(im1stars)
     kp2, des2 = findBlobs(im2stars)
     
@@ -87,8 +86,6 @@ def findStars(im1, im2):
 
     im_with_keypoints = cv2.drawKeypoints(im1, kp1, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
     cv2.imshow("img3", im_with_keypoints)
-    #cv2.waitKey(0)
-    #TODO Create distance descriptors
     return kp1, des1, kp2, des2
 
 def getOrbKP(im1, im2):
@@ -120,7 +117,6 @@ def getMatchedFeatures(im1, im2):
     # Convert images to grayscale
     keypoints1, d1, keypoints2, d2= findStars(im1, im2)
     
-    #print(d1) 
     # Match features.
     matcher = cv2.BFMatcher()
     # FLANN parameters
@@ -130,7 +126,6 @@ def getMatchedFeatures(im1, im2):
     flann = cv2.FlannBasedMatcher(index_params,search_params)
     matches = matcher.knnMatch(d1[:, :6].astype(np.float32), d2[:,:6].astype(np.float32), k=2)
 
-    #matches = matcher.match(d1[:,:6].astype(np.float32), d2[:, :6].astype(np.float32), None)
     # Sort matches by score
     matches.sort(key=lambda x: x[0].distance, reverse=False)
 
@@ -170,14 +165,12 @@ def alignImages(im1, im2):
         if h[:,2].mean() > 1000:
             print('Bad Alignment Detected')
             return None, None
-        #cv2.imwrite("matches.jpg", imMatches)
         # Use homography
         height, width, channels = im2.shape
         
         im1Reg = cv2.warpPerspective(im1, h, (width, height))
         cv2.imshow('img1',im1)
         cv2.imshow('img2',im1Reg)
-        #cv2.waitKey(0)
         return im1Reg, h
     else:
         return None, None
@@ -188,14 +181,24 @@ def getLightPollutionForImage(im):
     with some arbitatry weigting function. This solution can be used to remove
     that function from the 
     '''
+    r = im[:, :, 0]
+    g = im[:, :, 1]
+    b = im[:, :, 2]
+
+    ropt = getLightModelForChannel(r)
+    gopt = getLightModelForChannel(g)
+    bopt = getLightModelForChannel(b)
+
+
+def getLightModelForChannel(im):
     bg, stars = threshold(im, 3)
     
     #so need to extract the x values and y values for each pixel as well as brigtness
     #that is just background. 
     row, column, depth = np.indices(im.shape)
-    y = im[stars==25].flatten()
-    x1 = row[stars==25].flatten().reshape((y.shape[0], 1))
-    x2 = column[stars==25].flatten().reshape((y.shape[0], 1))
+    y = im[stars==0].flatten()
+    x1 = row[stars==0].flatten().reshape((y.shape[0], 1))
+    x2 = column[stars==0].flatten().reshape((y.shape[0], 1))
     x0 =np.ones(x2.shape)
 
     x = np.hstack((x0, x1, x2))
@@ -203,8 +206,6 @@ def getLightPollutionForImage(im):
     print('yshape {}'.format(y.shape))
     print('x1shape {}'.format(x1.shape))
     print('x2shape {}'.format(x2.shape))
-    #assert(x1.shape == x2.shape)
-    #assert(x1.shape == y.shape)
     
     beta = np.zeros((3,1))
 
@@ -215,13 +216,6 @@ def getLightPollutionForImage(im):
     print(W)
     print(beta)
 
-    #generate weighted matrix
-    #W=np.diag(len(y))
-    #import matplotlib.pyplot as plt
-
-    #plt.plot(x1, y, 'gx')
-    #plt.plot(x2, y,'rx')
-    #plt.show()
     xfull, yfull, depth = np.indices(im.shape)
     x1opt = xfull.flatten().reshape((-1, 1))
     x2opt = yfull.flatten().reshape((-1, 1))
@@ -230,7 +224,7 @@ def getLightPollutionForImage(im):
     xopt = np.hstack((x0opt, x1opt, x2opt))
     yopt = np.matmul(xopt, beta)
     yopt.reshape(im.shape)
-    return yopt, bg
+    return yopt
 
 
 
@@ -261,7 +255,6 @@ if __name__ == "__main__":
             pictures.append(f)
 
     imgref = cv2.imread('{}/{}'.format(dir, pictures[int(len(pictures)/2)]))
-    #imgref = cv2.resize(imgref,None,fx=0.5, fy=0.5, interpolation = cv2.INTER_AREA)
 
     images =[]
     unaligned=[]
@@ -281,22 +274,16 @@ if __name__ == "__main__":
     img1 = imgref.astype(np.float32)
 
     for img in images:
-        img = cv2.medianBlur(img, 11) # remove dead pixels
+        #img = cv2.medianBlur(img, 11) # remove dead pixels
         img1+=img.astype(np.float32)
-
-        if img1.max() > 220.:
+        img1*=0.5
+        #if img1.max() > 220.:
             #img1*=220.0/img1.max()
-            img1[img1>220] = 220
+        #    img1[img1>220] = 220
 
-    
     img1*=255.0/img1.max()
-    #lightpol, bg = getLightPollutionForImage(img1)
-    #img1[bg==1] -= lightpol[bg==1]
     print("Complete")
     cv2.imshow('img1', img1.astype(np.uint8))
     cv2.waitKey(0)
     
     cv2.imwrite('{}/solution.jpeg'.format(dir), img1)
-
-
-
