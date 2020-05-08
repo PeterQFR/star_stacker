@@ -241,7 +241,9 @@ def parse_args():
 
 
 if __name__ == "__main__":
-
+    
+    #TODO: Add Dark, Flat and Bias frames to the mix. Separate the image Capture
+    #From the processing
     cv2.namedWindow('img1', cv2.WINDOW_NORMAL)
     cv2.namedWindow('img2', cv2.WINDOW_NORMAL)
     cv2.namedWindow('img3', cv2.WINDOW_NORMAL)
